@@ -1,282 +1,373 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import mongoose from "mongoose";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import axios from "axios";
-import path from "path";
-import { fileURLToPath } from "url";
+/* =====================================================
+   CONFIG
+===================================================== */
+const BACKEND = "http://localhost:3000";
+const IMG = "https://image.tmdb.org/t/p/w500";
 
-dotenv.config();
+/* =====================================================
+   ELEMENTS
+===================================================== */
+const grid = document.querySelector(".grid");
 
-/* =========================
-   PATH FIX (ES MODULE)
-========================= */
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const trendingRow = document.getElementById("trendingRow");
+const continueRow = document.getElementById("continueRow");
+const recommendedRow = document.getElementById("recommendedRow");
 
-// FRONTEND IS ONE LEVEL UP (D:\popcorn)
-const FRONTEND_PATH = path.join(__dirname, "..");
+const searchBox = document.getElementById("searchBox");
+const genreFilter = document.getElementById("genreFilter");
+const ratingFilter = document.getElementById("ratingFilter");
+const languageFilter = document.getElementById("languageFilter");
+const moodFilter = document.getElementById("moodFilter");
 
-/* =========================
-   APP INIT
-========================= */
-const app = express();
-const PORT = process.env.PORT || 3000;
+const navMovies = document.getElementById("navMovies");
+const navShows = document.getElementById("navShows");
+const navWatchlist = document.getElementById("navWatchlist");
 
-/* =========================
-   MIDDLEWARE
-========================= */
-app.use(express.json());
-app.use(cors());
-app.use(express.static(FRONTEND_PATH));
+const loginBtn = document.getElementById("loginBtn");
+const logoutBtn = document.getElementById("logoutBtn");
 
-/* =========================
-   MONGODB CONNECT
-========================= */
-mongoose
-    .connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB Connected"))
-    .catch(err => console.error("❌ MongoDB Error:", err));
+const authModal = document.getElementById("authModal");
+const closeAuth = document.getElementById("closeAuth");
+const authTitle = document.getElementById("authTitle");
+const authName = document.getElementById("authName");
+const authEmail = document.getElementById("authEmail");
+const authPassword = document.getElementById("authPassword");
+const authSubmit = document.getElementById("authSubmit");
+const authToggle = document.getElementById("authToggle");
+const authMsg = document.getElementById("authMsg");
 
-/* =========================
-   USER MODEL  ✅ MISSING BEFORE
-========================= */
-watchlist: [
-    {
-        id: Number,
-        type: String
-    }
-]
+const infoOverlay = document.getElementById("infoOverlay");
 
-const User = mongoose.model("User", userSchema);
+/* =====================================================
+   STATE
+===================================================== */
+let currentType = "movie";
+let page = 1;
+let loading = false;
+let inWatchlist = false;
+let isSignup = false;
 
-/* =========================
-   TMDB CONFIG
-========================= */
-const TMDB = "https://api.themoviedb.org/3";
-const KEY = process.env.TMDB_KEY;
+let currentUser = JSON.parse(localStorage.getItem("currentUser"));
+let watchlist = JSON.parse(localStorage.getItem("watchlist") || "[]");
 
-console.log("TMDB KEY:", KEY ? "LOADED ✅" : "MISSING ❌");
+/* =====================================================
+   RESTORE LOGIN
+===================================================== */
+if (currentUser) {
+    loginBtn.innerText = currentUser.name;
+    logoutBtn.style.display = "inline-block";
+}
 
-/* =========================
-   API ROUTES
-========================= */
-
-// 🔥 Trending
-app.get("/api/trending", async (req, res) => {
+/* =====================================================
+   SAFE FETCH
+===================================================== */
+async function fetchJSON(url, fallback = { results: [] }) {
     try {
-        const type = req.query.type || "movie";
-        const r = await axios.get(`${TMDB}/trending/${type}/day`, {
-            params: { api_key: KEY }
-        });
-        res.json(r.data);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error();
+        return await res.json();
     } catch {
-        res.json({ results: [] });
-    }
-});
-
-// 🎬 Movies / TV
-app.get("/api/movies", async (req, res) => {
-    try {
-        const {
-            type = "movie",
-            page = 1,
-            search = "",
-            genre = "",
-            rating = "",
-            language = "",
-            mood = ""
-        } = req.query;
-
-        const url = search
-            ? `${TMDB}/search/${type}`
-            : `${TMDB}/discover/${type}`;
-
-        const params = {
-            api_key: KEY,
-            page,
-            sort_by: "popularity.desc",
-            query: search || undefined
-        };
-
-        if (genre) params.with_genres = genre;
-        if (rating) params["vote_average.gte"] = rating;
-        if (language) params.with_original_language = language;
-
-        if (mood === "romantic") params.with_genres = "10749";
-        if (mood === "thriller") params.with_genres = "53,27";
-        if (mood === "family") params.with_genres = "10751";
-        if (mood === "feelgood") params.with_genres = "35";
-
-        const r = await axios.get(url, { params });
-        res.json(r.data);
-    } catch {
-        res.json({ results: [] });
-    }
-});
-
-// 🎥 Movie Details
-app.get("/api/movie/:id", async (req, res) => {
-    try {
-        const type = req.query.type || "movie";
-        const id = req.params.id;
-
-        const [details, credits, videos, providers] = await Promise.all([
-            axios.get(`${TMDB}/${type}/${id}`, { params: { api_key: KEY } }),
-            axios.get(`${TMDB}/${type}/${id}/credits`, { params: { api_key: KEY } }),
-            axios.get(`${TMDB}/${type}/${id}/videos`, { params: { api_key: KEY } }),
-            axios.get(`${TMDB}/${type}/${id}/watch/providers`, {
-                params: { api_key: KEY }
-            })
-        ]);
-
-        const trailer = videos.data.results.find(v => v.site === "YouTube");
-
-        let ottLink = null;
-        const regions = providers.data.results || {};
-        for (const r in regions) {
-            if (regions[r]?.link) {
-                ottLink = regions[r].link;
-                break;
-            }
-        }
-
-        res.json({
-            details: details.data,
-            credits: credits.data,
-            trailerKey: trailer?.key || null,
-            ottLink
-        });
-    } catch {
-        res.json({});
-    }
-});
-
-/* =========================
-   AUTH (JWT) – WORKING
-========================= */
-
-// SIGN UP
-app.post("/api/auth/signup", async (req, res) => {
-    try {
-        const { name, email, password } = req.body;
-
-        if (!email || !password) {
-            return res.status(400).json({ msg: "Email and password required" });
-        }
-
-        const existing = await User.findOne({ email });
-        if (existing) {
-            return res.status(400).json({ msg: "User already exists" });
-        }
-
-        const hash = await bcrypt.hash(password, 10);
-
-        const user = await User.create({
-            name: name || "User",
-            email,
-            password: hash,
-            watchlist: []
-        });
-
-        const token = jwt.sign(
-            { id: user._id },
-            process.env.JWT_SECRET
-        );
-
-        res.json({ token, name: user.name });
-    } catch (err) {
-        console.error("SIGNUP ERROR:", err);
-        res.status(500).json({ msg: "Signup failed" });
-    }
-});
-
-// LOGIN
-app.post("/api/auth/login", async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            return res.status(400).json({ msg: "Email and password required" });
-        }
-
-        const user = await User.findOne({ email });
-        if (!user) {
-            return res.status(401).json({ msg: "User not found" });
-        }
-
-        const ok = await bcrypt.compare(password, user.password);
-        if (!ok) {
-            return res.status(401).json({ msg: "Wrong password" });
-        }
-
-        const token = jwt.sign(
-            { id: user._id },
-            process.env.JWT_SECRET
-        );
-
-        res.json({ token, name: user.name });
-    } catch (err) {
-        console.error("LOGIN ERROR:", err);
-        res.status(500).json({ msg: "Login failed" });
-    }
-});
-// =========================
-// AUTH MIDDLEWARE (ADD ONLY)
-// =========================
-function auth(req, res, next) {
-    const token = req.headers.authorization;
-    if (!token) return res.status(401).json({ msg: "No token" });
-
-    try {
-        req.user = jwt.verify(token, process.env.JWT_SECRET);
-        next();
-    } catch {
-        res.status(403).json({ msg: "Invalid token" });
+        return fallback;
     }
 }
 
-/* =========================
-   FRONTEND FALLBACK
-========================= */
-app.get("*", (req, res) => {
-    res.sendFile(path.join(FRONTEND_PATH, "index.html"));
+/* =====================================================
+   ACTIVE TAB
+===================================================== */
+function setActiveTab(activeBtn) {
+    [navMovies, navShows, navWatchlist].forEach(btn =>
+        btn.classList.remove("active")
+    );
+    activeBtn.classList.add("active");
+}
+
+/* =====================================================
+   INIT
+===================================================== */
+setActiveTab(navMovies);
+loadHome();
+loadBrowse();
+
+/* =====================================================
+   NAVIGATION
+===================================================== */
+navMovies.onclick = () => {
+    inWatchlist = false;
+    setActiveTab(navMovies);
+    switchType("movie");
+};
+
+navShows.onclick = () => {
+    inWatchlist = false;
+    setActiveTab(navShows);
+    switchType("tv");
+};
+
+navWatchlist.onclick = () => {
+    setActiveTab(navWatchlist);
+    openWatchlist();
+};
+
+function switchType(type) {
+    currentType = type;
+    page = 1;
+    grid.innerHTML = "";
+    loadHome();
+    loadBrowse();
+}
+
+/* =====================================================
+   HOME SECTIONS
+===================================================== */
+async function loadHome() {
+    loadRow(trendingRow, `/api/trending?type=${currentType}`);
+    loadRow(continueRow, `/api/movies?type=${currentType}&page=1`);
+    loadRow(recommendedRow, `/api/movies?type=${currentType}&rating=7`);
+}
+
+async function loadRow(row, endpoint) {
+    const data = await fetchJSON(BACKEND + endpoint);
+    row.innerHTML = "";
+    data.results.slice(0, 10).forEach(m => row.appendChild(movieCard(m)));
+}
+
+/* =====================================================
+   BROWSE + INFINITE SCROLL
+===================================================== */
+async function loadBrowse() {
+    if (loading || inWatchlist) return;
+    loading = true;
+
+    const url =
+        `${BACKEND}/api/movies?type=${currentType}` +
+        `&page=${page}` +
+        `&search=${searchBox.value}` +
+        `&genre=${genreFilter.value}` +
+        `&rating=${ratingFilter.value}` +
+        `&language=${languageFilter.value}` +
+        `&mood=${moodFilter.value}`;
+
+    const data = await fetchJSON(url);
+    data.results.forEach(m => grid.appendChild(movieCard(m)));
+
+    loading = false;
+}
+
+window.addEventListener("scroll", () => {
+    if (inWatchlist) return;
+    if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 300) {
+        page++;
+        loadBrowse();
+    }
 });
-// =========================
-// WATCHLIST APIs (ADD ONLY)
-// =========================
 
-// ADD TO WATCHLIST
-app.post("/api/watchlist", auth, async (req, res) => {
-    const user = await User.findById(req.user.id);
+/* =====================================================
+   SEARCH & FILTERS
+===================================================== */
+searchBox.addEventListener("input", debounce(resetBrowse, 400));
+genreFilter.onchange = resetBrowse;
+ratingFilter.onchange = resetBrowse;
+languageFilter.onchange = resetBrowse;
+moodFilter.onchange = resetBrowse;
 
-    const exists = user.watchlist.find(
-        item => item.id === req.body.id && item.type === req.body.type
+function resetBrowse() {
+    inWatchlist = false;
+    page = 1;
+    grid.innerHTML = "";
+    loadBrowse();
+}
+
+/* =====================================================
+   MOVIE CARD
+===================================================== */
+function movieCard(movie) {
+    const div = document.createElement("div");
+    div.className = "card";
+
+    div.innerHTML = `
+    <img src="${movie.poster_path ? IMG + movie.poster_path : "https://via.placeholder.com/300x450?text=No+Image"}">
+    <h4>${movie.title || movie.name}</h4>
+    <p>⭐ ${movie.vote_average || "N/A"}</p>
+  `;
+
+    div.onclick = () => openDetails(movie.id, movie._type || currentType);
+    return div;
+}
+
+/* =====================================================
+   MOVIE DETAILS
+===================================================== */
+async function openDetails(id, type = currentType) {
+    const data = await fetchJSON(`${BACKEND}/api/movie/${id}?type=${type}`);
+    if (!data.details) return;
+
+    const director =
+        data.credits?.crew?.find(p => p.job === "Director")?.name || "N/A";
+
+    const cast =
+        data.credits?.cast?.slice(0, 8).map(c => c.name).join(", ") || "N/A";
+
+    infoOverlay.innerHTML = `
+    <div class="infoCard full">
+      <button class="closeDetails">✕</button>
+      <img src="${data.details.poster_path ? IMG + data.details.poster_path : "https://via.placeholder.com/500x750?text=No+Image"}">
+      <h2>${data.details.title || data.details.name}</h2>
+      <p>${data.details.overview}</p>
+      <p><b>Director:</b> ${director}</p>
+      <p><b>Cast:</b> ${cast}</p>
+      <div class="actions">
+        ${data.trailerKey ? `<a target="_blank" href="https://youtube.com/watch?v=${data.trailerKey}">▶ Trailer</a>` : ""}
+        ${data.ottLink ? `<a target="_blank" href="${data.ottLink}">📺 Watch</a>` : "<span>OTT not available</span>"}
+        <button onclick="addToWatchlist(${id})">➕ Watchlist</button>
+      </div>
+    </div>
+  `;
+
+    infoOverlay.style.display = "flex";
+    infoOverlay.onclick = () => (infoOverlay.style.display = "none");
+    document.querySelector(".infoCard").onclick = e => e.stopPropagation();
+    document.querySelector(".closeDetails").onclick = () =>
+        (infoOverlay.style.display = "none");
+}
+
+/* =====================================================
+   WATCHLIST
+===================================================== */
+function openWatchlist() {
+    if (!currentUser) {
+        showLoginMessage();
+        return;
+    }
+    inWatchlist = true;
+    renderWatchlist();
+}
+
+function showLoginMessage() {
+    grid.innerHTML = `
+    <div class="card loginPromptCard">
+      <h2>🔒 Login Required</h2>
+      <p>
+        Please <span class="loginLink">login</span> or
+        <span class="loginLink">sign up</span> to view your watchlist.
+      </p>
+    </div>
+  `;
+
+    document.querySelectorAll(".loginLink").forEach(el => {
+        el.onclick = () => {
+            authMsg.innerText = "";
+            authModal.style.display = "flex";
+        };
+    });
+}
+
+function addToWatchlist(id) {
+    if (!currentUser) {
+        showLoginMessage();
+        return;
+    }
+
+    const exists = watchlist.find(
+        item => item.id === id && item.type === currentType
     );
 
     if (!exists) {
-        user.watchlist.push({
-            id: req.body.id,
-            type: req.body.type
-        });
-        await user.save();
+        watchlist.push({ id, type: currentType });
+        localStorage.setItem("watchlist", JSON.stringify(watchlist));
+        alert("Added to Watchlist");
+    }
+}
+
+async function renderWatchlist() {
+    grid.innerHTML = "";
+
+    for (const item of watchlist) {
+        const data = await fetchJSON(
+            `${BACKEND}/api/movie/${item.id}?type=${item.type}`
+        );
+
+        if (!data.details) continue;
+
+        grid.appendChild(
+            movieCard({
+                id: item.id,
+                title: data.details.title || data.details.name,
+                poster_path: data.details.poster_path,
+                vote_average: data.details.vote_average,
+                _type: item.type
+            })
+        );
+    }
+}
+
+/* =====================================================
+   AUTH
+===================================================== */
+loginBtn.onclick = () => {
+    authMsg.innerText = "";
+    authModal.style.display = "flex";
+};
+
+closeAuth.onclick = () => (authModal.style.display = "none");
+
+authToggle.onclick = () => {
+    isSignup = !isSignup;
+    authTitle.innerText = isSignup ? "Create Profile" : "Sign In";
+    authName.style.display = isSignup ? "block" : "none";
+};
+
+authSubmit.onclick = async () => {
+    if (!authEmail.value || !authPassword.value) {
+        authMsg.innerText = "Email and password required";
+        return;
     }
 
-    res.json({ success: true });
-});
+    const endpoint = isSignup ? "/api/auth/signup" : "/api/auth/login";
 
-// GET WATCHLIST
-app.get("/api/watchlist", auth, async (req, res) => {
-    const user = await User.findById(req.user.id);
-    res.json(user.watchlist);
-});
+    const res = await fetch(BACKEND + endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            name: authName.value,
+            email: authEmail.value,
+            password: authPassword.value
+        })
+    });
 
+    const data = await res.json();
 
-/* =========================
-   START SERVER
-========================= */
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-});
+    if (!res.ok) {
+        authMsg.innerText = data.msg || "Auth failed";
+        return;
+    }
+
+    currentUser = { name: data.name, token: data.token };
+    localStorage.setItem("currentUser", JSON.stringify(currentUser));
+
+    loginBtn.innerText = data.name;
+    logoutBtn.style.display = "inline-block";
+    authModal.style.display = "none";
+};
+
+/* =====================================================
+   LOGOUT
+===================================================== */
+logoutBtn.onclick = () => {
+    localStorage.removeItem("currentUser");
+    currentUser = null;
+    logoutBtn.style.display = "none";
+    loginBtn.innerText = "Sign In";
+    setActiveTab(navMovies);
+    switchType("movie");
+};
+
+/* =====================================================
+   UTIL
+===================================================== */
+function debounce(fn, delay) {
+    let t;
+    return (...args) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...args), delay);
+    };
+}
